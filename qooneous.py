@@ -104,6 +104,12 @@ This is important to indicate because of Authentication setup after design. (NB,
 Within the userlike entities, there is need to indicate what attribute can be used as UserName or identifiers for authenication.
 Authentication requires a UserPassword, but passwords are add as part of the authentication setup that you do not handle so do add a password attribute.
 
+IMPORTANT:
+If a type of user is not specified do not assume except it unavoidable
+*Example*:
+I need to build a fee registration app or a ticketing app.
+Thinking: Attribute should include a User entity and not assuming Student e.t.c
+
 *Example*:
 User: I need a app to monitor my students as a teacher
 Entity: Teacher
