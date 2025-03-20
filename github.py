@@ -97,85 +97,142 @@ class GitHubManager:
             print(f"File creation failed for {file_path}: {str(e)}")
             return False
 
+    # In GitHubManager class
     def push_zip_to_repo(self, repo_owner: str, repo_name: str, 
-                        zip_content: bytes, commit_message: str = "Initial commit") -> bool:
-        """Push zip content directly to GitHub repository"""
+                        zip_content: bytes, commit_message: str = "Initial commit",
+                        status_container=None) -> bool:
+        """Push zip content directly to GitHub repository with detailed status"""
+        # Create status columns if container provided
+        if status_container:
+            col1, col2, col3 = status_container.columns([3, 5, 2])
+            col1.markdown("**File**")
+            col2.markdown("**Status**")
+            col3.markdown("**Progress**")
+        
+        total_files = 0
+        success_count = 0
+        error_count = 0
+        
+        # First pass to count files
+        with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
+            total_files = sum(1 for f in zip_ref.infolist() if not f.is_dir())
+        
         # Create repository first
+        if status_container:
+            status_container.info(f"📦 Creating repository {repo_name}...")
         if not self.create_repository(repo_name, private=False):
-            return False  # Only return False if repo creation fails
+            if status_container:
+                status_container.error("Repository creation failed!")
+            return False
 
         # Process zip file in memory
         try:
             with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
-                skipped_files = []  # Track skipped files
+                progress_bar = status_container.progress(0) if status_container else None
+                current_file = 0
                 
                 for file_info in zip_ref.infolist():
                     if file_info.is_dir():
-                        continue  # Skip directories
+                        continue
 
-                    # Fix path issue - remove project root folder if it's duplicated
-                    file_path = file_info.filename
-                    parts = file_path.split('/')
-                    if parts and parts[0] == repo_name:
-                        # Remove the duplicated root folder
-                        file_path = '/'.join(parts[1:])
-                    
-                    # Skip empty paths after correction
+                    current_file += 1
+                    file_path = self._clean_file_path(file_info.filename, repo_name)
                     if not file_path:
                         continue
 
-                    # Read file content as bytes (don't decode binary files)
-                    content = zip_ref.read(file_info)
-                    
-                    # Handle text vs binary files differently
-                    is_binary = self._is_binary(content)
-                    
-                    if is_binary:
-                        # For binary files, use base64 encoding for GitHub API
-                        import base64
-                        encoded_content = base64.b64encode(content).decode('ascii')
-                        encoding = "base64"
-                    else:
-                        # For text files, try to decode and clean
-                        try:
-                            decoded_content = content.decode('utf-8')
-                            file_ext = os.path.splitext(file_info.filename)[1]
-                            cleaned_content = self._clean_code_content(decoded_content, file_ext)
-                            
-                            # For text files, use regular encoding
-                            import base64
-                            encoded_content = base64.b64encode(cleaned_content.encode('utf-8')).decode('ascii')
-                            encoding = "base64"
-                        except UnicodeDecodeError:
-                            # If decoding fails, treat as binary
-                            import base64
-                            encoded_content = base64.b64encode(content).decode('ascii')
-                            encoding = "base64"
+                    # Update progress
+                    if status_container:
+                        progress = current_file / total_files
+                        progress_bar.progress(min(progress, 1.0))
 
-                    # Try to create file, but continue even if it fails
+                    # Create status row
+                    if status_container:
+                        file_col, status_col, _ = status_container.columns([3, 5, 2])
+                        file_col.markdown(f"`{file_path}`")
+                        status_placeholder = status_col.empty()
+
                     try:
-                        success = self.create_file_with_encoding(repo_owner, repo_name, 
-                                                file_path, encoded_content, encoding,
-                                                commit_message)
-                        if not success:
-                            skipped_files.append(file_path)
-                            print(f"Skipping file: {file_path} - Creation failed")
+                        # File processing logic...
+                        success = self._process_file(repo_owner, repo_name, file_info, 
+                                                zip_ref, commit_message, status_placeholder)
+                        
+                        if success:
+                            success_count += 1
+                            if status_container:
+                                status_placeholder.success("✅ Uploaded")
+                        else:
+                            error_count += 1
+                            if status_container:
+                                status_placeholder.warning("⚠️ Skipped")
+
                     except Exception as e:
-                        skipped_files.append(file_path)
-                        print(f"Skipping file: {file_path} - Error: {str(e)}")
-                
-                # Log summary of skipped files
-                if skipped_files:
-                    print(f"Repository created but {len(skipped_files)} files were skipped")
-                
-                return True  # Return True as long as the repo was created
+                        error_count += 1
+                        if status_container:
+                            status_placeholder.error(f"❌ Failed: {str(e)}")
+                        continue
+
+                # Final status
+                if status_container:
+                    progress_bar.empty()
+                    status_container.success(f"""
+                        🚀 Push completed!
+                        - Successfully uploaded: {success_count} files
+                        - Skipped/Failed: {error_count} files
+                        Repository: https://github.com/{repo_owner}/{repo_name}
+                    """)
+                    
+                return True
                 
         except zipfile.BadZipFile:
-            print("Invalid ZIP file format")
+            if status_container:
+                status_container.error("❌ Invalid ZIP file format")
             return False
         except Exception as e:
-            print(f"Error processing ZIP file: {str(e)}")
+            if status_container:
+                status_container.error(f"❌ Error processing ZIP file: {str(e)}")
             return False
-            
-        
 
+    # Helper methods
+    def _clean_file_path(self, path: str, repo_name: str) -> str:
+        """Clean file paths from ZIP structure"""
+        parts = path.split('/')
+        if parts and parts[0] == repo_name:
+            return '/'.join(parts[1:])
+        return path
+
+    def _process_file(self, repo_owner, repo_name, file_info, zip_ref, 
+                    commit_message, status_placeholder):
+        """Process individual file with status updates"""
+        file_path = self._clean_file_path(file_info.filename, repo_name)
+        content = zip_ref.read(file_info)
+        
+        if status_placeholder:
+            status_placeholder.info("🔍 Analyzing file...")
+        
+        # Binary check
+        if self._is_binary(content):
+            if status_placeholder:
+                status_placeholder.info("📦 Detected binary file...")
+            encoded_content = base64.b64encode(content).decode('ascii')
+            encoding = "base64"
+        else:
+            if status_placeholder:
+                status_placeholder.info("📝 Processing text file...")
+            try:
+                decoded_content = content.decode('utf-8')
+                file_ext = os.path.splitext(file_path)[1]
+                cleaned_content = self._clean_code_content(decoded_content, file_ext)
+                encoded_content = base64.b64encode(cleaned_content.encode('utf-8')).decode('ascii')
+                encoding = "base64"
+            except UnicodeDecodeError:
+                if status_placeholder:
+                    status_placeholder.warning("⚠️ Fallback to binary encoding")
+                encoded_content = base64.b64encode(content).decode('ascii')
+                encoding = "base64"
+
+        # Create file
+        if status_placeholder:
+            status_placeholder.info("⬆️ Uploading...")
+        return self.create_file_with_encoding(repo_owner, repo_name, 
+                                            file_path, encoded_content, encoding,
+                                            commit_message)

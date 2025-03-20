@@ -423,38 +423,38 @@ if st.session_state.auth_config_created and st.session_state.application_id:
         # Simplified UI - direct push button
         if st.button("Push to GitHub"):
             try:
-                # Get S3 download URL from your API
+                # Get S3 download URL
                 api_response = api.code_s3_url(application_id)
                 if not api_response or 's3Url' not in api_response:
                     st.error("Failed to get download URL")
                     st.stop()
 
-                # Download zip content directly
-                with st.spinner('Downloading and deploying code...'):
+                # Download zip content
+                with st.spinner('Downloading code...'):
                     response = requests.get(api_response['s3Url'])
                     response.raise_for_status()
                     zip_content = response.content
 
-                    # Push using GitHub manager
+                # Create status container
+                with st.expander("📤 GitHub Push Progress", expanded=True):
+                    status_container = st.container()
+                    
+                    # Push with detailed status
                     success = st.session_state.github_manager.push_zip_to_repo(
                         repo_owner="QuCoon-ML-AI",
                         repo_name=application_name,
                         zip_content=zip_content,
-                        commit_message=f"Initial commit for {application_name}"
+                        commit_message=f"Initial commit for {application_name}",
+                        status_container=status_container
                     )
 
                     if success:
                         github_link = f"https://github.com/QuCoon-ML-AI/{application_name}"
                         st.markdown(f"[🔗 GitHub Repo]({github_link})", unsafe_allow_html=True)
                         st.success("Code successfully pushed to GitHub!")
-                    else:
-                        st.error("Failed to push code to GitHub")
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"S3 download failed: {str(e)}")
+                        
             except Exception as e:
                 st.error(f"Deployment failed: {str(e)}")
-
     
 
 # SEPARATE DEPLOY TO CLOUD BUTTON (outside QooDeploy callback)
