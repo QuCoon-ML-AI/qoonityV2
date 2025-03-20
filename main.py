@@ -5,14 +5,12 @@ from botocore.exceptions import ClientError
 
 session = boto3.Session()
 
-
 aws_access_key_id = os.getenv("aws_access_key_id")
 aws_secret_access_key = os.getenv("aws_secret_access_key")
 region_name = os.getenv("region_name")
 
 bedrock = session.client(service_name='bedrock-runtime', region_name="us-east-1", aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
 modelId = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-memory_list = []
 
 tool_list = [
     {
@@ -152,23 +150,33 @@ tool_list = [
 ]
 
 # Function to fetch a response from the model
-def get_completion(prompt, system_prompt=None):
+def get_completion(prompt, chat_history=None, system_prompt=None):
     inference_config = {
         "temperature": 0.0
     }
     tools = {
-                "tools": tool_list
-            }
+        "tools": tool_list
+    }
+    
+    # Format the chat history to include in the prompt
+    history_context = ""
+    if chat_history and len(chat_history) > 0:
+        # Get last 3 messages or fewer if there aren't 3 yet
+        recent_messages = chat_history[-3:] if len(chat_history) > 3 else chat_history
+        for message in recent_messages:
+            history_context += f"{message['role']}: {message['content']}\n"
+    
+    # Combine history with the current prompt
+    full_prompt = f"{history_context}\n{prompt}" if history_context else prompt
     
     converse_api_params = {
         "modelId": modelId,
-        "messages": [{"role": "user", "content": [{"text": prompt}]}],
+        "messages": [{"role": "user", "content": [{"text": full_prompt}]}],
         "inferenceConfig": inference_config,
         "toolConfig": tools
     }
     if system_prompt:
         converse_api_params["system"] = [{"text": system_prompt}]
-    
     
     try:
         response = bedrock.converse(**converse_api_params)
@@ -186,53 +194,27 @@ def get_completion(prompt, system_prompt=None):
         if "response" in tool_result_dict:
             return tool_result_dict
         return {
-                "request_type": "generic_request",
-                "response": response_message
-            }
-        
-
-            
+            "request_type": "generic_request",
+            "response": response_message
+        }
 
     except ClientError as err:
         message = err.response['Error']['Message']
         print(f"A client error occurred: {message}")
         return None
 
-# Load memory from file if it exists and is valid
-file_path = 'memory.txt'
-if os.path.exists(file_path):
-    try:
-        with open(file_path, 'r') as file:
-            memory_list = json.load(file)
-            print(f"Memory loaded from {file_path}")
-    except json.JSONDecodeError:
-        print("Error: memory.txt is empty or contains invalid JSON. Starting fresh.")
-        memory_list = [] 
-else:
-    print("No memory file found, starting fresh.")
-
-def get_response(prompt, system_prompt=None):
+def get_response(prompt, chat_history=None, system_prompt=None):
     try:
         system_prompt = qoonity_head
         
-        # Use the loaded memory when generating the completion
-        response = get_completion(prompt + " " + str(memory_list), system_prompt)
+        # Use the chat history when generating the completion
+        response = get_completion(prompt, chat_history, system_prompt)
         
         if response:  # Only process if the response is valid
-            memory_list.append(f"prompt: {prompt}, response: {response}")
-            #print("Response:", json.dumps(response, indent=4))
-            #print("Memory:", memory_list)
-
-            # Save memory to a file
-            with open(file_path, 'w') as file:
-                json.dump(memory_list, file, indent=4)
-
-            
-            print(f"Memory successfully written to {file_path}")
             return response
         else:
             print("No response from the model. Please try again.")
             return None     
     except Exception as e:
         print(f"An error occurred: {e}")
-
+        return None

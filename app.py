@@ -10,7 +10,6 @@ from github import GitHubManager
 import os
 import requests
 
-
 st.title('Qoonity.ai🤖')
 st.write('Welcome to Qoonity.ai!')
 
@@ -92,8 +91,6 @@ if 'github_manager' not in st.session_state:
     github_token = os.getenv("GITHUB_TOKEN")
     st.session_state.github_manager = GitHubManager(github_token)
 
-
-
 # Cache the API response to avoid redundant calls
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_code_data(applicationId):
@@ -126,8 +123,8 @@ with st.sidebar:
         st.session_state.messages.append({"role": "user", "content": prompt})
         with messages:
             with st.spinner('Wait for it...'):
-                response = get_response(prompt)
-                #print(response)
+                # Pass the message history to the get_response function
+                response = get_response(prompt, st.session_state.messages)
                 time.sleep(1)
         
         st.session_state.response_type = response.get("request_type", "generic_request")
